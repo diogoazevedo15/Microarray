@@ -1,0 +1,592 @@
+---
+title: "Microarray Data Project"
+output:
+  html_notebook:
+    toc: true
+  pdf_document: default
+---
+
+<div align="center">
+### Métodos Estatísticos em Genética
+#### Departamento de Estatística e Investigação Operacional 
+#### Diogo Azevedo (55773) e Inês Santos (55754) 
+#### Junho 2021
+### ![](https://cdn.discordapp.com/attachments/824598800991387678/848924737489076274/ciencias_ul_azul_h_s-ass.png){width=10%}
+
+![](https://media.discordapp.net/attachments/841602688499449866/852172809626451971/20080-400x300.webp){width=50%}
+
+</div>
+
+
+# 1. Introdução
+O estudo de perfis de expressão genética em células e tecidos tornou-se uma ferramenta importante na área da investigação e na medicina, sendo essencial para a identificação da função dos genes e de alterações na sua expressão em contextos patológicos [3]. Para a realização de estudos em larga escala de variações na expressão genética é necessário um método capaz de o fazer com precisão e exatidão. Desta forma, surgiu a tecnologia de *microarrays*, que se tornou uma ferramenta importante no diagnóstico de doenças [4].
+
+Um *microarray*, ou *chip* de DNA, é uma placa que contém moléculas de DNA em posições fixas chamadas *spots* que permitem a identificação de material genético proveniente da amostra em estudo. De um modo geral, o material genético é extraído dos tecidos ou células na forma de mRNA e sofre um processo de transcrição reversa, sendo obtidas cadeias de cDNA. Estas cadeias são marcadas com moléculas fluorescentes, normalmente Cy3 e Cy5, e hibridadas num *microarray*. O passo seguinte é gerar uma imagem incidindo raios laser sobre o *microarray*, de modo a tirar partido da fluorescência previamente inserida na amostra, excitando então as moléculas fluorescentes. O princípio subjacente à quantificação dos níveis de expressão é que a quantidade de fluorescência medida em cada *spot* é diretamente proporcional à quantidade de mRNA com sequência complementar presente na amostra analisada. Estas experiências não fornecem dados sobre o nível absoluto de expressão de um determinado gene (concentrações reais de mRNA), mas são úteis para comparar o nível de expressão entre condições e genes (por exemplo, saúde *vs* doença) [5].
+
+Neste *notebook*, vamos explorar duas bibliotecas da linguagem R que nos irão permitir a análise de *microarray data* recolhida de 3 doentes cardíacos operados. Cada amostra foi submetida a duas condições experimentais: regime arterial e regime venoso.
+Para cada doente, as duas amostras foram hibridadas e a expressão de 2994 genes foi analisada com o objetivo de identificar genes diferencialmente expressos em cada tratamento. Os nossos dados correspondem então aos valores de fluorescência medidos depois da hibridação das amostras recolhidas de cada doente (chip1, chip2, chip3). A amostra submetida ao regime arterial **Art** corresponde ao canal vermelho (**Cy5**) e a amostra submetida ao regime venoso **Ven** corresponde ao canal verde (**Cy3**).
+
+O trabalho está divido em duas grandes partes. Numa primeira parte, iremos proceder à análise do Paciente 1 (**chip1**), na qual pretendemos analisar as representações gráficas mais pertinentes e avaliar o impacto que estratégias de *data cleaning* e transformação (p.e normalização) têm na identificação de genes diferencialmente expressos na amostra. Posteriormente, numa segunda parte, vamos analisar os dados dos Pacientes 2 e 3 (**chip2 e chip3**), bem como proceder à análise conjunta dos *microarrays* dos três pacientes, de modo a comparar as diferentes metodologias adotadas para a identificação de genes diferencialmente expressos em resposta a um dado tratamento.
+
+
+# 2. Análise do Paciente 1
+
+Vamos começar pelo *load* do package *genArise*. Este package contém funções específicas [1] que permitem a análise de *microarray data* para a identificação de genes que são diferencialmente expressos quando estes se encontram sobre uma dada condição [2].
+
+```{r}
+library(genArise)
+```
+
+### Load chip1.txt
+Vamos começar por fazer o *load* do chip1 para o formato *spot* requirido pela biblioteca *genArise*. Aquando da leitura do ficheiro, é necessário ter em conta as colunas de interesse na especificação dos argumentos da função *read.spot*, atribuindo o valor numérico correto de cada coluna presente no ficheiro de texto.
+
+```{r}
+chip1 <- read.spot( "chip1.txt", cy3 = 3, cy5 = 2,
+                    bg.cy3 = 4, bg.cy5 = 5, ids = 1, header = TRUE,
+                    sep = "\t", is.ifc = FALSE)
+```
+
+### A) Representação Gráfica das Intensidades nos Dois Canais
+Como ponto de partida, vamos começar por visualizar as intensidades dos dois canais do primeiro paciente, criando um diagrama de dispersão e um gráfico MA, e averiguar qual o mais adequado para a análise.
+
+#### **Diagrama de dispersão**
+Para fazer o *plot* do diagrama de dispersão, vamos usar a função *cys.plot* que irá representar os valores dos canais **Cy5** em função dos valores de **Cy3** depois de transformados pela função logarítmica de base 2.
+```{r}
+cys.plot(chip1, col = "orange")
+```
+**Figura 1**: Diagrama de Dispersão para o Paciente 1.
+
+Para o gráfico acima, conseguimos observar dois elementos distintos:
+
+* Os pontos, representados a laranja. *Nota: Por default os pontos são representados a verde. Esta representação foi alterada para laranja, de modo a evitar confusão com o canal verde (**Cy3**)*;
+* A diagonal representada a azul.
+
+Os genes com expressão semelhante para os dois canais irão estar representados mais próximos da diagonal, valores com expressão superior para o canal **Cy3** estarão representados **abaixo** da diagonal e valores com expressão superior para o canal **Cy5** estarão representados **acima** da diagonal.
+
+Assim sendo, quando olhamos para o diagrama acima, conseguimos verificar que existe uma grande concentração dos pontos abaixo da diagonal na parte inferior esquerda, que em teoria indicaria uma **grande** expressividade destes genes para o canal **Cy3**. Contudo, fazendo uma análise crítica, podemos concluir que este padrão não ocorre devido a uma expressão natural dos genes para o canal **Cy3**, mas talvez devido a artefactos presentes nos dados (nomeadamente a *noise* de *background*). Para além disto, o facto de os pontos estarem bastante distantes da diagonal leva-nos a querer que existe a necessidade de normalizar os nossos dados.
+
+#### **Gráfico MA**
+Tal como o diagrama de dispersão anterior, também o gráfico MA permite a comparação das intensidades dos dois canais, com a diferença de que este é um diagrama da distribuição do rácio de intensidade entre os canais Vermelho/Verde (**M**), em função da intensidade média (**A**).
+**M** e **A** são matematicamente definidos pelas seguintes fórmulas:
+
+<!-- Fórmulas MA -->
+<p align="center">
+  <img src="https://cdn.discordapp.com/attachments/824598800991387678/848944939043258428/unknown.png" >
+</p>
+
+*R: Red = Vermelho | G: Green = Verde*
+
+```{r}
+ma.plot(chip1, col = "orange")
+```
+**Figura 2**: Gráfico MA para o Paciente 1.
+
+Este gráfico facilita a interpretação das intensidades dos canais pois:
+
+* Para valores inferiores de **A**, o gene em questão terá menos expressividade. Para valores superiores de **A** ocorre o contrário, tendo assim o gene em questão maior expressividade;
+
+* Para valores abaixo da linha azul, temos que o gene tem mais expressividade para o canal verde (**Cyn3**) e para valores acima da linha azul temos que o gene tem mais expressividade para o canal vermelho (**Cyn5**).
+
+O output esperado de um gráfico MA consiste numa distribuição uniforme dos pontos em torno do eixo horizontal (y=0), criando uma nuvem de pontos cujo *spread* vai afunilando com o aumento dos valores de **A** (eixo x). Como podemos observar, à semelhança do que identificamos para o diagrama de dispersão, os nossos dados *raw* refletem a necessidade de ser feita alguma correção (*data cleaning* e normalização).
+
+
+### B) Subtração do *Background* nos Dois Canais
+No seguimento do ponto anterior, vamos então começar as correções aos nossos dados, começando por fazer a subtração dos valores de *background* aos seus respetivos canais. Aplicando a função *bg.correct*, os novos valores para os canais são definidos por:
+
+* **Cy3 = Cy3 - BgCy3**
+* **Cy5 = Cy5 - BgCy5**
+```{r}
+chip1_bc.spot <- bg.correct(chip1)
+ma.plot(chip1_bc.spot, col = "orange")
+```
+**Figura 3**: Gráfico MA após subtração do *background* para o Paciente 1.
+
+Com a aplicação da subtração de *background*, e verificando a influência desta nos resultados através da comparação dos gráficos MA, conseguimos dizer que existiam de facto artefactos nos dados *raw*. Assim, conseguimos verificar a importância desta etapa de *data cleaning* para uma análise adequada dos dados.
+
+As principais diferenças observadas são:
+
+* Na **Figura 2**, os pontos com maior expressividade para o canal vermelho, encontrados mais a esquerda do diagrama, desaparecem depois de feita a subtração do *background*. Isto diz-nos que os valores altos de expressividade ocorriam devido a artefactos introduzidos pelo *background*;
+
+* Após a correção do *background*, a nuvem de pontos observada na **Figura 3** torna-se menos densa, apresentando uma maior dispersão ao longo do eixo X.
+
+### C) Normalização do *Array*
+No seguimento do *cleaning* dos nossos dados, vamos avaliar o impacto da normalização dos dados na representação gráfica. Para isto, aplicamos então a função *global.norm* aos dados obtidos após a subtração do *background* e fazemos a representação do gráfico MA.
+```{r}
+chip1_bc_n.spot <- global.norm(mySpot = chip1_bc.spot)
+ma.plot(chip1_bc_n.spot, col = "orange")
+```
+**Figura 4**: Gráfico MA após subtração do *backgroud* e normalização dos dados para o Paciente 1.
+
+Tal como foi averiguado em pontos anteriores, a normalização surtiu um grande impacto nos dados. Como conseguimos observar na **Figura 4**, os pontos seguem agora uma distribuição mais uniforme em torno do eixo horizontal (y=0). De todas as representações obtidas até agora, o gráfico MA da figura acima é o que melhor nos permite realizar uma análise das diferenças de expressão dos genes na amostra de tecido do paciente 1, com uma concentração clara de pontos na parte mais a esquerda do gráfico, um afunilamento esperado com o aumento dos valores de A, e uma dispersão esperada para alguns pontos que nos permitirá identificar os genes cuja expressão se destaca. É possível aprofundar esta análise através do cálculo dos *Z-scores*, que é efetuada e analisada na próxima secção.
+
+### D) Cálculo do *Z-score* para Cada Gene
+O cálculo dos *Z-scores* para um *microrray* corrige os dados internamente dentro de uma hibridação e os valores obtidos para cada gene são expressos em função do desvio padrão em relação à média normalizada de 0. Estes *scores* podem ser diretamente utilizados para a identificação de diferenças significativas na expressão génica entre as nossas duas condições de estudo (regime arterial *vs* regime venoso).
+
+A função *Zscore* utilizada faz o cálculo dos valores da média e desvio padrão (**DP**), não para o conjunto total dos dados mas sim para uma janela de pontos obtida através do ponto para o qual o *score* está a ser calculado.
+```{r}
+chip1_zc <- Zscore(chip1_bc_n.spot, type="ma")
+Zscore.plot(chip1_zc)
+```
+**Figura 5**: Gráfico MA com *Z-scores* representados pela coloração dos pontos para o Paciente 1.
+
+Como podemos observar acima, temos então os *Z-scores* representados por 4 cores diferentes sob cada ponto do MA plot:
+
+* Verde: Pontos com valores **< 1 zscore** da média;
+* Azul: Pontos com valores **1 < zscore < 1.5** da média;
+* Ciano: Pontos com valores **1.5 < zscore 2** da média;
+* Branco: Pontos com valores **>2 zscore** da média.
+
+Este esquema para os valores dos *Z-score* é relevante para a escolha de um ponto de corte adequado que permita criar listas de genes com expressão diferencial.
+
+<p align="center">
+  <img src="https://cdn.discordapp.com/attachments/824598800991387678/851472727335763998/download.jpg" >
+</p>
+**Figura 6**: Distribuição dos valores de *Z-score* (***z***: Z-score; ***x***: ponto; **μ**: média; **σ**: desvio padrão).
+
+Observando a figura acima, sendo a distribuição do *Z-score* simétrica com uma distribuição próxima da normal, cerca de 95% dos dados encontram-se entre 2 e -2 (na **Figura 5** equivale aos pontos a branco). Assim, vamos utilizar estes valores como pontos de corte para a identificação dos genes diferencialmente expressos.
+
+
+#### Identificação dos Genes Diferencialmente Expressos
+Genes com valores acima de 2 e abaixo de -2 de *Z-score* são os genes identificados como diferencialmente expressos.
+```{r}
+art_ex_1 <- chip1_zc@dataSets$Id[chip1_zc@dataSets$Zscore >= 2]
+ven_ex_1 <- chip1_zc@dataSets$Id[chip1_zc@dataSets$Zscore <= -2]
+```
+
+Os genes com *Z-score* superior a 2 serão aqueles com maior expressão para o canal **Cy5**, correspondente ao tratamento arterial.
+```{r}
+cat('Genes Art expressos:', length(art_ex_1))
+art_ex_1
+```
+
+Os genes com *Z-score* inferiores a -2 serão aqueles com maior expressão para o canal **Cy3**, correspondente ao tratamento venoso.
+```{r}
+cat('Genes Ven expressos:', length(ven_ex_1))
+ven_ex_1
+```
+Conseguimos verificar que existe um maior número de genes diferencialmente expressos para o tratamente venoso (78 *vs* 52). Vamos agora comparar os genes encontrados para ambos os tratamentos e constatar a possível existência de genes em comum. Para isto, vamos criar uma função que permita comparar os Id's de dois vetores diferentes e identificar elementos encontrados em ambos.
+
+```{r}
+comparar_ids <- function (sobre_expressos_1, sobre_expressos_2) {
+  # Initialize array with Ids in common
+  ids_comuns <- c()
+
+  # For loop to compare Ids in each array
+  for (id_1 in sobre_expressos_1) {
+    for (id_2 in sobre_expressos_2){
+      if (id_1 == id_2){
+        ids_comuns <- c(ids_comuns, id_1)
+        break
+      }
+    }
+  }
+  return (ids_comuns)
+}
+```
+
+Aplicando então a função criada aos vetores *art_ex_1* e *ven_ex_1*:
+```{r}
+comparar_ids(art_ex_1, ven_ex_1)
+```
+Concluímos assim que não existem genes diferencialmente expressos em comum para os dois tratamentos aplicados à amostra de tecido do paciente 1.
+
+
+# 3. Análise dos Pacientes 2 e 3
+
+### Load chip2.txt e chip3.txt
+Tal como foi feito para o paciente 1, vamos fazer o *load* adequado dos pacientes 2 e 3 com auxílio da função *read.spot*.
+```{r}
+chip2 <- read.spot( "chip2.txt", cy3 = 3, cy5 = 2,
+                    bg.cy3 = 4, bg.cy5 = 5, ids = 1, header = TRUE,
+                    sep = "\t", is.ifc = FALSE)
+
+chip3 <- read.spot( "chip3.txt", cy3 = 3, cy5 = 2,
+                    bg.cy3 = 4, bg.cy5 = 5, ids = 1, header = TRUE,
+                    sep = "\t", is.ifc = FALSE)
+```
+
+### E) Normalização dos Dois *Arrays*
+
+À semelhança da alínea **C)** para o paciente 1, vamos proceder à normalização dos dados para os pacientes 2 e 3, através da função *global.norm*. De notar a necessidade de proceder à subtração do *background* de modo a eliminar possíveis artefactos nos dados provocados por *noise*.
+```{r}
+# Background subtraction
+chip2_bc.spot <- bg.correct(chip2)
+chip3_bc.spot <- bg.correct(chip3)
+
+# Array's Normalization
+chip2_bc_n.spot <- global.norm(mySpot = chip2_bc.spot)
+chip3_bc_n.spot <- global.norm(mySpot = chip3_bc.spot)
+```
+
+```{r}
+ma.plot(chip2_bc_n.spot, col = "orange")
+```
+**Figura 7**: Gráfico MA para o Paciente 2.
+```{r}
+ma.plot(chip3_bc_n.spot, col = "orange")
+```
+**Figura 8**: Gráfico MA para o Paciente 3.
+
+Observando os gráficos MA para os pacientes 2 e 3, conseguimos ver que de um modo geral estes apresentam o comportamento esperado descrito anteriormente. No entanto, é visível uma diferença nos valores de intensidade média para o paciente 2, com genes claramente destacados à esquerda da nuvem de pontos, demonstrando assim um pequeno conjunto de genes com valores de A claramente inferiores para o paciente 2. 
+
+### F) *Centering*
+Com os valores dos canais de cada paciente normalizados, vamos agora aplicar *centering* aos valores de *log ratio* (**M**) de cada paciente. *Centering* é um dos métodos mais comuns de normalização entre *arrays*, em que os dados são centrados para garantir que as médias e desvios padrões de todas as distribuições são iguais. Para o contexto deste problema, a aplicação deste método irá permitir fazer uma comparação coerente entre os valores de intensidade dos genes diferencialmente expressos em cada paciente, uma vez que estas são transformadas para a mesma distribuição.
+
+Para verificar o efeito deste método, vamos apresentar *boxplots* paralelos dos *log ratios* de cada paciente, antes e após a sua aplicação.
+
+```{r}
+library(ggplot2)
+```
+
+#### Definir Dataframes
+Visto que a biblioteca *genArise* foi concebida para fazer a análise individual de *microarray data*, esta de raíz não contém métodos de normalização entre arrays (nomeadamente *centering*). O *centering* consiste, para cada valor de *log ratio*, na subtração da média do valor desta variável do *array* e divisão pelo desvio padrão.
+
+<p align="center">
+  <img src="https://cdn.discordapp.com/attachments/824598800991387678/851486069152153625/CodeCogsEqn.gif" >
+</p>
+
+Portanto, para aplicar o *centering* aos nossos dados, vamos realizar o seguinte:
+
+1. Criar uma dataframe para cada paciente com as seguinte colunas: Log ratio (**M**), Log ratio centered (**M_c**) e Id de cada gene;
+
+2. Para apresentar o *boxplot* do *log ratio* de cada paciente, faremos o acerto do tamanho das colunas de cada dataframe, pois após a subtração de *background* o número de genes para análise de cada paciente diferiu;
+
+3. Apresentação de *boxplots* paralelos de modo a verificar o impacto da normalização entre *arrays*.
+```{r}
+# Define M values
+
+# M1
+M1 <- log2(chip1_bc_n.spot@spotData$Cy5) - log2(chip1_bc_n.spot@spotData$Cy3)
+M1_c <- (M1- mean(M1) ) / sd(M1)
+M1_df <- data.frame(M1, M1_c, chip1_bc_n.spot@spotData$Id)
+colnames(M1_df) <- c("M", "M_c", "Id")
+
+#M2
+M2 <- log2(chip2_bc_n.spot@spotData$Cy5) - log2(chip2_bc_n.spot@spotData$Cy3)
+M2_c <- (M2- mean(M2) ) / sd(M2)
+M2_df <- data.frame(M2, M2_c, chip2_bc_n.spot@spotData$Id)
+colnames(M2_df) <- c("M", "M_c", "Id")
+
+#M3
+M3 <- log2(chip3_bc_n.spot@spotData$Cy5) - log2(chip3_bc_n.spot@spotData$Cy3)
+M3_c <- (M3- mean(M3) ) / sd(M3)
+M3_df <- data.frame(M3, M3_c, chip3_bc_n.spot@spotData$Id)
+colnames(M3_df) <- c("M", "M_c", "Id")
+```
+
+### *Boxplots* Paralelos
+```{r}
+# Size refix of each column
+e1 <- length(M2_df$M) - length(M1_df$M)
+e3 <- length(M2_df$M) - length(M3_df$M)
+
+# Add 0's to smaller columns
+M1_plot <- c(M1_df$M,rep(0, each=e1))
+M3_plot <- c(M3_df$M,rep(0, each=e3))
+
+# Temp columns for boxplots
+col_1 <- c(M1_plot, M2_df$M, M3_plot)
+col_2 <- rep(c('M1','M2', 'M3'),each=c(2966))
+
+df <- data.frame(col_1, col_2)
+boxplot(df$col_1 ~ df$col_2)
+```
+**Figura 9**: *Boxplots* paralelos pré *centering*.
+
+```{r}
+# Centering
+e1 <- length(M2_df$M) - length(M1_df$M)
+e3 <- length(M2_df$M) - length(M3_df$M)
+
+M1_c_plot <- c(M1_df$M_c,rep(0, each=e1))
+M3_c_plot <- c(M3_df$M_c,rep(0, each=e3))
+
+col_1 <- c(M1_c_plot, M2_df$M_c, M3_c_plot)
+col_2 <- rep(c('M1_c','M2_c', 'M3_c'),each=c(2966))
+
+df_c <- data.frame(col_1, col_2)
+boxplot(df_c$col_1 ~ df_c$col_2)
+```
+**Figura 10**: *Boxplots* paralelos pós *centering*.
+
+Comparando as **Figuras** **9** e **10**, conseguimos verificar o impacto do método, nomeadamente no *boxplot* dos valores de M para o paciente 1, em que observamos um ajuste no tamanho da caixa representativa de 50% dos dados, tornando-se agora semelhante em tamanho às dos pacientes 2 e 3. De notar que mesmo após o *centering* dos dados, o comportamento dos *outliers* não se altera, preservando assim a informação relevante para a análise.
+
+### G) Identificação dos Genes com Expressão Diferencial nos Três *Arrays*
+Para este ponto vamos realizar duas análises distintas: uma para os valores de *log ratio* dos *arrays* sem *centering* dos *arrays*, e outra com *centering* dos *arrays.* Deste modo, pretendemos verificar potenciais diferenças na identificação de genes diferencialmente expressos quando tido em conta múltiplos *arrays*.
+
+A análise dos *Z-scores* calculados seguirá a mesma metodologia e interpretação descritas na alínea **D)**.
+
+
+#### G.1 Análise Pré *Centering*
+Vamos realizar uma análise dos três pacientes depois de feita a subtração de *background* e aplicada a função *global.norm*, tal como foi feito para o paciente 1.
+
+### Paciente 2
+```{r}
+chip2_zc <- Zscore(chip2_bc_n.spot, type="ma")
+Zscore.plot(chip2_zc)
+```
+**Figura 11**: Gráfico MA com *Z-scores* representados pela coloração dos pontos para o Paciente 2.
+
+```{r}
+art_ex_2 <- chip2_zc@dataSets$Id[chip2_zc@dataSets$Zscore >= 2]
+ven_ex_2 <- chip2_zc@dataSets$Id[chip2_zc@dataSets$Zscore <= -2]
+
+cat('Genes Art expressos paciente 2:', length(art_ex_2))
+art_ex_2
+
+cat('Genes Ven expressos paciente 2:', length(ven_ex_2))
+ven_ex_2
+```
+
+### Paciente 3
+```{r}
+chip3_zc <- Zscore(chip3_bc_n.spot, type="ma")
+Zscore.plot(chip3_zc)
+```
+**Figura 12**: Gráfico MA com *Z-scores* representados pela coloração dos pontos para o Paciente 3.
+
+```{r}
+art_ex_3 <- chip3_zc@dataSets$Id[chip3_zc@dataSets$Zscore >= 2]
+ven_ex_3 <- chip3_zc@dataSets$Id[chip3_zc@dataSets$Zscore <= -2]
+
+cat('Genes Art expressos paciente 3:', length(art_ex_3))
+art_ex_3
+
+cat('Genes Ven expressos paciente 3:', length(ven_ex_3))
+ven_ex_3
+```
+#### Identificação de Genes em Comum
+
+Pelos outputs anteriores, conseguimos ver que existe um número considerável de genes diferencialmente expressos para ambos os tratamentos nos pacientes. Assim, vamos tirar partido da função criada anteriormente de modo a identificar genes diferencialmente expressos em comum, agora considerando os três pacientes.
+
+#### Genes Diferencialmente Expressos em Comum para o Tratamento Arterial
+Com o auxílio da função *comparar_ids* vamos então verificar genes diferencialmente expressos para o tratamento arterial, presentes em pelo menos dois dos três pacientes, de modo a identificar que genes apresentam maior relevância.
+```{r}
+# Obtain genes in common in at least 2 arrays
+art_um_dois <- comparar_ids(art_ex_1, art_ex_2)
+art_um_tres <- comparar_ids(art_ex_1, art_ex_3)
+art_dois_tres <- comparar_ids(art_ex_2, art_ex_3)
+
+cat('Genes em comum entres os pacientes 1 e 2: ',art_um_dois)
+cat('Genes em comum entres os pacientes 1 e 3: ',art_um_tres)
+cat('Genes em comum entres os pacientes 2 e 3: ',art_dois_tres)
+```
+Conseguimos ver no output acima que existem 8 genes relevantes de acordo com o critério estabelecido. Ainda, é possivel notar que não existe nenhum gene diferencialmente expresso em comum nos três pacientes, pelo que para o problema em estudo todos estes genes seriam uma proposta possível para ter em conta.
+
+#### Genes Diferencialmente Expressos em Comum para o Tratamento Venoso
+Seguindo a mesma lógica do ponto anterior, vamos realizar agora a análise dos genes diferencialmente expressos para o tratamento venoso.
+```{r}
+# Obtain genes in common in at least 2 arrays
+ven_um_dois <- comparar_ids(ven_ex_1, ven_ex_2)
+ven_um_tres <- comparar_ids(ven_ex_1, ven_ex_3)
+ven_dois_tres <- comparar_ids(ven_ex_2, ven_ex_3)
+
+cat('Numero de genes em comum entres os pacientes 1 e 2: ',length(ven_um_dois))
+cat('Numero de genes em comum entres os pacientes 1 e 3: ',length(ven_um_tres))
+cat('Numero de genes em comum entres os pacientes 2 e 3: ',length(ven_dois_tres ))
+```
+Conseguimos então ver que não existem genes diferencialmente expressos em comum para o tratamento venoso. É preciso ter em conta que o tamanho da amostra é muito reduzido (N=3) e que os dados usados para análise não estão *centered*, pelo que podemos estar a fazer uma análise incorreta dos valores de **M** de cada gene por estes não estarem todos com a mesma distribuição.
+
+#### G.2 Análise Pós *Centering*
+Neste ponto vão ser usados os dados obtidos na **alínea F)** para realizar uma análise semelhante à do ponto anterior, e desta forma verificar possíveis alterações pela transformação usada (*centering*).
+
+```{r}
+# Means after centering 
+means <- c(round(mean(M1_c),3),round(mean(M2_c),3),round(mean(M3_c),3))
+cat('Medias pós centering (M1, M2, M3):', means)
+
+sd <- c(round(sd(M1_c),3),round(sd(M2_c),3),round(sd(M3_c),3))
+cat('Desvio Padrão pós centering (M1, M2, M3):', sd)
+```
+Olhando para os valores de média e desvio padrão do output acima, conseguimos verificar que o método de *centering* foi aplicado com sucesso.
+
+### Genes Diferencialmente Expressos em Comum para o Tratamento Arterial
+```{r}
+art_ex_M1c <- M1_df$Id[M1_df$M_c >= 2]
+ven_ex_M1c <- M1_df$Id[M1_df$M_c <= -2]
+
+art_ex_M2c <- M2_df$Id[M2_df$M_c >= 2]
+ven_ex_M2c <- M2_df$Id[M2_df$M_c <= -2]
+
+art_ex_M3c <- M3_df$Id[M3_df$M_c >= 2]
+ven_ex_M3c <- M3_df$Id[M3_df$M_c <= -2]
+```
+
+```{r}
+# Obtain genes in common in at least 2 arrays
+art_um_dois_c <- comparar_ids(art_ex_M1c, art_ex_M2c)
+art_um_tres_c <- comparar_ids(art_ex_M1c, art_ex_M3c)
+art_dois_tres_c <- comparar_ids(art_ex_M2c, art_ex_M3c)
+
+cat('Genes em comum entres os pacientes 1 e 2: ',art_um_dois_c)
+cat('Genes em comum entres os pacientes 1 e 3: ',art_um_tres_c)
+cat('Genes em comum entres os pacientes 2 e 3: ',art_dois_tres_c)
+```
+Com os genes diferencialmente expressos presentes em pelo menos dois pacientes, achamos pertinente realizar a comparação dos resultados obtidos com os da metodologia anterior sem *centering* com o intuito de verificar possíveis diferenças, bem como o impacto do *centering* na análise.
+
+```{r}
+comparar_ids(art_um_dois_c, art_um_dois)
+comparar_ids(art_um_tres_c, art_um_tres)
+comparar_ids(art_dois_tres_c, art_dois_tres)
+```
+Comparando pré e pós *centering*:
+
+* Pacientes 1 e 2: O número de genes diferencialmente expressos dimunui, existindo agora apenas um que não estava presente no conjunto de dados pré *centering*;
+* Pacientes 1 e 3: Os genes diferencialmente expressos coincidem em ambos os tratamentos de dados;
+* Pacientes 2 e 3: Após a aplicação do *centering*, existe um maior número de genes diferencialmente expressos, dois dos quais em comum com os genes encontrados para os dados sem *centering*.
+
+#### Genes Diferencialmente Expressos em Comum para o Tratamento Venoso
+Aplicando o método de análise anterior, vamos agora olhar para o tratamento venoso.
+
+```{r}
+# Obtain genes in common in at least 2 arrays
+ven_um_dois_c <- comparar_ids(ven_ex_M1c, ven_ex_M2c)
+ven_um_tres_c <- comparar_ids(ven_ex_M1c, ven_ex_M3c)
+ven_dois_tres_c <- comparar_ids(ven_ex_M2c, ven_ex_M3c)
+ven_um_dois_c
+ven_um_tres_c
+ven_dois_tres_c
+```
+Ao contrário do que obtivemos para a análise do dados sem *centering*, conseguimos ver agora que existem genes diferencialmente expressos em comum entre os pacientes 2 e 3. Verificamos assim o impacto que o *centering* pode ter nesta análise, visto que esta levou agora à identificação de possíveis genes relevantes para o estudo do tratamento venoso.
+
+Como balanço final desta análise com e sem *centering*, podemos verificar a importância de ter em conta a normalização entre *arrays* quando é pretendido analisar mais do que um *array* em simultâneo sendo preferível então adotar este procedimento.
+
+### H) Package *Limma*
+
+Para esta alínea, vamos recorrer a um *package* bastante popular utilizado para analisar *microarray data*: *limma*. Este método começa por fazer *fit* de um modelo linear para estimar a variabilidade dos dados e, para a análise estatística e avaliação da expressão diferencial dos genes, nomeadamente na análise de *two channel microarray data*, usa um método Bayeseano empírico [6].
+
+Uma das principais vantagens deste *package* é o facto de permitir uma análise conjunta de múltiplos arrays, o que contrasta com a abordagem do *package* *genArise*, que se direciona à análise singular de *microarrays*.
+
+```{r}
+library(limma)
+```
+
+#### Load dos Ficheiros
+Vamos começar por identificar os ficheiros que contêm os nossos dados e proceder ao seu *load* utilizando a função *read.maimages*. Os argumentos principais definidos abaixo referem-se aos canais *Red* (**Rf**) e *Green* (**Gf**) e aos seus respetivos valores de *background* (**Rb**, **Gb**).
+```{r}
+files <- dir(pattern = "*.txt")
+print(files)
+```
+```{r}
+RG <- read.maimages(files, columns= list(Rf="Art", Gf="Ven", Rb="BgArt", Gb="BgVen"))
+RG
+```
+#### Transformação dos Dados
+Como primeiro passo, tal como foi realizado anteriormente para a análise com o package *genArise*, será coerente começar por realizar um pré-processamento dos dados, procedendo à subtração dos valores de *background*, bem como à normalização dos dados.
+
+Este *package*, ao contrário do *genArise*, permite-nos proceder à normalização **dentro** e **entre** *arrays*. Seguindo então o processo de pré-processamento aplicado anteriormente, começamos por realizar a normalização dentro de cada *array*, utilizando a função *normalizeWithinArrays* com o método *loess*. Este é um método comum para *microarray data* cuja relação entre os dois canais não é linear. Posteriormente, com recurso à função *normalizeBetweenArrays* é possível proceder à normalização entre *arrays*. Para esta, usamos o método *scale* que irá transformar os dados de forma a igualar a mediana de todos os *arrays*.
+
+```{r}
+MA <- backgroundCorrect(RG,method="sub")
+MA <- normalizeWithinArrays(MA,method="loess")
+MA <- normalizeBetweenArrays(MA,method="scale")
+```
+
+#### *Fit* do Modelo Linear e Método Bayesano
+Nesta *aproach*, é necessário a especificação de uma *design matrix* que irá indicar a amostra de mRNA aplicada a cada *array*. Em seguida, é feito o *fit* de um modelo linear para cada gene que estima as *fold changes* e os *standard errors*. Por fim, aplicamos o método Bayeseano empírico ao modelo linear anterior, que irá calcular estatísticas moderadas **T** e **F** bem como *log-odds*, permitindo assim obter o *ranking* dos genes com base na sua expressão diferencial. Neste método, os parâmetros são tratados como quantidades aleatórias, sendo-lhes associada uma distribuição *a priori*. O objectivo será estimar as probabilidades *a posteriori* de um dado gene ser diferencialmente expresso.
+
+```{r}
+design <- c(1,1,1)
+fit <- lmFit(MA,design)
+fit <- eBayes(fit)
+```
+
+#### Identificação dos Genes Diferencialmente Expressos
+Para identificar quais os genes diferencialmente expressos vamos utilizar a função *topTable*, que irá criar uma tabela com os *top-ranked genes* após o ajuste do modelo linear aos dados. O tamanho desta lista é definido pelo argumento *number*, ao qual atribuímos o valor 20.
+```{r}
+table<-topTable(fit,number=20,adjust="BH")
+table
+```
+O *top* de genes apresentado na tabela é definido com base na estatística B. A tabela é então ordenada por ordem decrescente com base nesta estatística, para identificar genes diferencialmente expressos. Analisando a coluna *logFC*, conseguimos identificar valores positivos e negativos, que correspondem aos genes diferencialmente expressos nos tratamentos arterial e venoso, respetivamente. Podemos ainda visualizar este *top* 20 de genes graficamente, através de um *volcano plot*.
+
+#### *Volcano Plot*
+
+Este tipo de gráfico é normalmente utilizado para representar os resultados de uma análise de *microarray data*. Este gráfico é um tipo de gráfico de dispersão que representa a significância estatística (**P-value**) em função da *fold change*, permitindo uma visualização intuitiva dos genes com *fold changes* elevadas que são estatisticamente significativos. Estes serão, então, os genes com relevância biológica.
+
+```{r}
+volcanoplot(fit,highlight=20,main="Art vs Ven")
+abline(1.55,0)
+```
+**Figura 13**: *Volcano Plot* com *top* 20 genes destacados a azul.
+
+No *volcano plot* acima é possível identificar os genes diferencialmente expressos para o tratamento venoso mais à esquerda, para o tratamento arterial mais à direita, e aqueles com expressão estatisticamente significativa no topo. 
+Conseguimos então observar que para o tratamento venoso, o número de genes encontrados é inferior ao número de genes para o tratamento arterial. Para além disto, no tratamento arterial conseguimos identificar que os genes apresentam uma dispersão maior tanto para os valores de *fold change* como para os valores de significância estatística. Por oposição, no tratamento venoso temos uma nuvem de genes muito próximos entre si, com apenas um gene destacado mais à esquerda.
+
+Começando por referir que todos os genes destacados acima da linha são considerados genes relevantes, podemos ainda assim pormenorizar esta análise:
+
+* Para o tratamento venoso, é possível verificar que o *gene 2940* se destaca em termos de expressão diferencial;
+* Para o tratamento arterial, conseguimos identificar dois padrões distintos: por um lado, temos genes com valores mais elevados para o *fold change* (gene 2878), indicando assim uma elevada expressão diferencial; por outro, genes com valores de *fold change* mais reduzidos mas com um maior nivel de significância estatística (224).
+
+### H) Comparação dos Dois Métodos
+
+
+#### Comparação de Resultados
+Depois de testadas as várias metodologias, achamos pertinente comparar os resultados obtidos quando utilizado o package *genArise* com *centering* dos dados e o package *limma*. Visto que o *output* da tabela do package *limma* com os genes diferencialmente expressos indentificados contém apenas o número sem as letras "Id", vamos começar por corrigir esta formatação.
+```{r}
+table$id <- rownames(table)
+art_ex_limma <- table$id[table$logFC > 0]
+ven_ex_limma <- table$id[table$logFC < 0]
+
+# Add "ID" to the beggining of each gene
+art_ex_limma_aux <- rep("Id",each=c(length(art_ex_limma)))
+art_ex_limma <- paste(art_ex_limma_aux, art_ex_limma, sep="")
+
+ven_ex_limma_aux <- rep("Id",each=c(length(ven_ex_limma)))
+ven_ex_limma <- paste(ven_ex_limma_aux, ven_ex_limma, sep="")
+```
+
+Recordado ao critério adotado na alínea **G)**, em que os genes de interesse seriam aqueles presentes em pelo menos dois pacientes, vamos criar uma lista com todos estes, de modo a comparar com a lista de genes obtida com o package *limma* através da função previamente criada *comparar_ids*.
+
+```{r}
+art_ex_cent <- c(comparar_ids(art_ex_M1c, art_ex_M2c),
+                 comparar_ids(art_ex_M1c, art_ex_M3c),
+                 comparar_ids(art_ex_M2c, art_ex_M3c))
+
+ven_ex_cent <- c(comparar_ids(ven_ex_M1c, ven_ex_M2c),
+                 comparar_ids(ven_ex_M1c, ven_ex_M3c),
+                 comparar_ids(ven_ex_M2c, ven_ex_M3c))
+
+cat("Tratamento Arterial:",comparar_ids(art_ex_cent, art_ex_limma))
+cat("Tratamento Venoso:",length(comparar_ids(ven_ex_cent, ven_ex_limma)))
+```
+Pelo *output* acima, conseguimos ver que apenas dois genes diferencialmente expressos para o tratamento arterial coincidem em ambas as metodologias. Já para o tratamento venoso, nenhum gene identificado coincide. Com isto, podemos concluir que o critério estabelecido para a identificação de genes diferencialmente expressos na alinea **G)** terá sido demasiado restrito. Portanto, vamos fazer uma nova comparação, utilizando agora todos os genes identificados para cada um dos pacientes individualmente.
+
+```{r}
+art_em_comum <- c(comparar_ids(art_ex_M1c, art_ex_limma), 
+                  comparar_ids(art_ex_M2c, art_ex_limma), 
+                  comparar_ids(art_ex_M3c, art_ex_limma))
+
+ven_em_comum <- c(comparar_ids(ven_ex_M1c, ven_ex_limma), 
+                  comparar_ids(ven_ex_M2c, ven_ex_limma), 
+                  comparar_ids(ven_ex_M3c, ven_ex_limma))
+
+cat("Tratamento Arterial:",art_em_comum)
+cat("Tratamento Venoso:",ven_em_comum)
+```
+
+Com esta nova comparação, podemos verificar que existem mais genes em comum, incluindo agora para o tratamento venoso. Dos genes identificados para o tratamento arterial, conseguimos confirmar o destaque do **gene 2878** suportando as suspeitas levantadas aquando da análise do *volcano plot*. Baseando-nos nesta comparação final, tendo sido estes genes identificados em ambas as metodologias, consideramos esta lista final como aqueles com maior relevância biológica.
+
+### Comentários Finais
+
+Podemos começar por salientar as diferenças nos resultados obtidos quando utilizadas diferentes metodologias. Neste trabalho, quando realizada a análise dos três pacientes, a utilização do package *genArise* com e sem *centering* e do package *limma*, os genes diferencialmente expressos identificados para cada diferiram. Numa primeira fase, para o package *genArise*, verificamos a importância de realizar a normalização entre arrays (*centering*). Logo aqui identificamos a vantagem do package *limma*, que suporta esta operação de raíz. Quando comparados os *outputs* destas duas metodologias (*genArise* com *centering* vs *limma*), conseguimos identificar a presença de genes em comum, revelando assim a sua importância para os respetivos tratamentos.
+
+Para além da vantagem do package *limma* acima referida, conseguimos ainda identificar vantagens relativamente aos *outputs* gráficos e respetivas interpretações, nomeadamente o *volcano plot* que nos permite visualizar de uma forma intuitica os níveis de *fold change* e respetivos níveis de significância. No entanto, é importante não descreditar o package *genArise*, que disponibiliza boas ferramentas para uma análise individual de *microarrays*. 
+
+Por fim, tendo em conta a grande quantidade de dados em contexto de investigação e o objetivo de tirar máximo partido destes, conseguimos ver com o terminar deste trabalho que o package *limma* se destaca como solução mais robusta.
+
+Através das listas dos genes diferencialmente expressos obtidas, é possivel traçar perfis genéticos que contribuem para avanços no estudo das mais diversas patologias. Além disso, o tipo de análise desenvolvida neste trabalho pode servir de base para análises mais robustas, podendo seguir-se a classificação dos genes em termos metabólicos ou oncológicos, de acordo com o problema em estudo. Podemos então destacar o caráter prospectivo da tecnologia de *microarrays* que, ao estabelecer associações entre grupos de genes, permite definir uma ligação entre o genoma e os processos biológicos envolvidos na manifestação do fenótipo ou na resposta a um dado tratamento, direcionando assim estudos futuros.
+
+# 4. Referências
+[1]	Mayen APG, Guille GC, Ruiz LR. Package ‘genArise’ 2021. (Reference Manual available at https://www.bioconductor.org/packages/release/bioc/html/genArise.html)
+
+[2]	Mayen APG, Guille GC, Ruiz LR, Coutiño GC. The genArise Package 2021. (genAriseGUI Vignette available at https://www.bioconductor.org/packages/release/bioc/html/genArise.html)
+
+[3] Tarca, A. L., Romero, R., Draghici, S. Analysis of microarray experiments of gene expression profiling. American journal of obstetrics and gynecology 2006.
+
+[4] Lemos, C. I. F. M. Seleção de genes diferencialmente expressos baseada em metodologia ROC (Receiver Operating Characteristic) (Doctoral dissertation) 2017.
+
+[5] Causton, H., Quackenbush, J., Brazma, A. Microarray gene expression data analysis: a beginner's guide. John Wiley & Sons 2009.
+
+[6] Smyth, G. K., Ritchie, M., Thorne, N., Wettenhall, J., Shi, W., Hu, Y limma: linear models for microarray and RNA-Seq data user’s guide 2002. (Available at https://bioconductor.org/packages/release/bioc/html/limma.html)
+
+
